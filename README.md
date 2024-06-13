@@ -1,6 +1,6 @@
-# Telegram Translation and Info Bot
+# Channel Translator
 
-This repository contains a script for a Telegram bot that performs translation, interacts with OpenAI's API, and conducts web searches using DuckDuckGo. The bot logs its activities and handles common phrases.
+This repository contains a script that monitors Telegram channels for updated events, translates those events, and sends them to a Telegram group. Multiple translation options available.
 
 ## Features
 
@@ -39,7 +39,7 @@ The `config.ini` file supports the following sections and options:
 
 ### [OpenAI#]
 
-You can add multiple OpenAI providers by creating sections with names like `[OpenAI1]`, `[OpenAI2]`, etc. At least one is required if `Translators / OpenAI` is true.
+You can add multiple OpenAI providers by creating sections with names like `[OpenAI1]`, `[OpenAI2]`, etc. At least one is required if `Translators / OpenAI` is true. The first successful connection will be used per each event.
 
 - `api_base`: The base URL for the OpenAI API (required, default: `https://api.openai.com/v1`).
 - `model`: The model to use for OpenAI (required, default: `gpt-3.5-turbo`).
@@ -47,7 +47,7 @@ You can add multiple OpenAI providers by creating sections with names like `[Ope
 
 ### [Files]
 
-- `common_phrases`: The file containing common phrases (optional, default: `common_phrases.txt`).
+- `common_phrases`: The file containing common phrases to be removed from translation, like ads or signatures (optional, default: `common_phrases.txt`).
 
 ### [Translators]
 
@@ -59,6 +59,7 @@ You can add multiple OpenAI providers by creating sections with names like `[Ope
 ### [DuckDuckGo]
 
 - `model`: The model to use for DuckDuckGo translations (optional, default: `llama-3-70b`).
+- `proxy`: Proxy setting for the DuckDuckGo Search function (optional, default: None).
 
 ### [Channels]
 
@@ -70,8 +71,8 @@ You can add multiple OpenAI providers by creating sections with names like `[Ope
 
 ### [Messages]
 
-- `system_message`: The system message for the AI model (optional, see example below).
-- `user_message`: The user message template for translation requests (optional, see example below).
+- `system_message`: The system message for the AI model (required, see example below).
+- `user_message`: The user message template for translation requests. Will replace '{text}' with text of message. (required, see example below).
 
 Example `config.ini`:
 
@@ -97,6 +98,7 @@ DuckDuckGo = true
 
 [DuckDuckGo]
 model = llama-3-70b
+proxy = 
 
 [Channels]
 channels = @channel1, @channel2

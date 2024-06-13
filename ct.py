@@ -77,8 +77,11 @@ def translate_with_deepl(text):
     response = requests.post(url, data=payload)
     return response.json()["translations"][0]["text"]
 
-def translate_with_duckduckgo(text, model):
-    ddgs = DDGS()
+def translate_with_duckduckgo(text, model, proxy_url=None):
+    if proxy_url:
+        ddgs = DDGS(proxy=proxy_url)
+    else:
+        ddgs = DDGS()
     full_message = system_message + " " + user_message_template.format(text=text)
     try:
         result = ddgs.chat(keywords=full_message, model=model)
@@ -130,7 +133,7 @@ def main():
                 elif provider_name == 'DuckDuckGo':
                     try:
                         model = config.get('DuckDuckGo', 'model', fallback='llama-3-70b')
-                        translations["DuckDuckGo"] = translate_with_duckduckgo(filtered_text, model)
+                        translations["DuckDuckGo"] = translate_with_duckduckgo(filtered_text, model, duckduckgo_proxy)
                     except Exception as e:
                         logging.error(f"DuckDuckGo translation error: {e}")
 
@@ -181,6 +184,8 @@ if __name__ == "__main__":
         'Google': config.getboolean('Translators', 'Google', fallback=True),
         'DuckDuckGo': config.getboolean('Translators', 'DuckDuckGo', fallback=False)
     }
+
+    duckduckgo_proxy = config.get('DuckDuckGo', 'proxy', fallback=None)
 
     openai_providers = get_openai_providers(config)
 

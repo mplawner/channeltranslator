@@ -186,8 +186,13 @@ if __name__ == "__main__":
     }
 
     duckduckgo_proxy = config.get('DuckDuckGo', 'proxy', fallback=None)
-
-    openai_providers = get_openai_providers(config)
+    
+    openai_enabled = config.getboolean('Translators', 'OpenAI', fallback=False)
+    if openai_enabled:
+        openai_providers = get_openai_providers(config)
+    else:
+        openai_providers = []
+    #openai_providers = get_openai_providers(config)
 
     CHANNELS = config['Channels']['channels'].split(', ')
 

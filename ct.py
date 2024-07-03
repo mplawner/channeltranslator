@@ -1,13 +1,14 @@
 import logging
 from telethon import TelegramClient, events
 from googletrans import Translator
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import openai
 import requests
 import configparser
 import argparse
 from duckduckgo_search import DDGS
+import hashlib
 
 # Configure logging
 log_file = f'ct.log'
@@ -16,6 +17,9 @@ logging.basicConfig(level=logging.INFO,
                     handlers=[logging.FileHandler(log_file, 'a', 'utf-8'), 
                               logging.StreamHandler()])
 logger = logging.getLogger(__name__)
+
+# Dictionary to track processed message hashes with timestamps
+processed_messages = {}
 
 def load_common_phrases(common_phrases_file):
     try:
@@ -90,10 +94,33 @@ def translate_with_duckduckgo(text, model, proxy_url=None):
         logging.error(f"DuckDuckGo translation error: {e}")
     return "Translation failed."
 
+def hash_message(message):
+    return hashlib.md5(message.encode()).hexdigest()
+
+def cleanup_processed_messages():
+    current_time = datetime.now()
+    cutoff_time = current_time - timedelta(minutes=30)
+    keys_to_remove = [k for k, v in processed_messages.items() if v < cutoff_time]
+    for key in keys_to_remove:
+        del processed_messages[key]
+
+def truncate_caption(caption, max_length=1024):
+    if len(caption) > max_length:
+        return caption[:max_length - 3] + "..."
+    return caption
+
 def main():
     @client.on(events.NewMessage(chats=CHANNELS))
     async def new_message_handler(event):
         original_text = event.message.text
+
+        cleanup_processed_messages()
+        message_hash = hash_message(original_text)
+        if message_hash in processed_messages:
+            logging.info("Duplicate message detected. Ignoring.")
+            return
+
+        processed_messages[message_hash] = datetime.now()
 
         logging.info(f"New message received: {original_text}")
 
@@ -140,9 +167,12 @@ def main():
         message = f"From {channel_link}:\n\n" + "\n\n".join([f"{key}:\n{value}" for key, value in translations.items()])
         logging.info(message)
 
+        caption = truncate_caption(message)
+
         if media:
             try:
-                await client.send_file(recipient_group_id, file=media, caption=message)
+                await client.send_file(recipient_group_id, file=media, caption=caption)
+                #await client.send_file(recipient_group_id, file=media, caption=message)
                 logging.info("Media and message sent successfully")
             except Exception as e:
                 logging.error(f"Failed to send media and message to the target group: {e}")

@@ -275,8 +275,11 @@ async def main():
     async def new_message_handler(event):
         start_time = datetime.now()
         original_text = event.message.text or ''
-        if not original_text.strip():
-            logger.info("Received a message with no text. Skipping.")
+        media = event.message.media
+
+        # Check if the message has neither text nor media
+        if not original_text.strip() and not media:
+            logger.info("Received a message with no text and no media. Skipping.")
             return
 
         # Asynchronously clean up processed messages
@@ -289,10 +292,9 @@ async def main():
             return
         processed_messages[message_hash] = datetime.now()
 
-        logger.info(f"New message received: {original_text}")
+        logger.info(f"New message received: {original_text or 'Media message without text'}")
 
         filtered_text = filter_common_phrases(original_text, common_phrases)
-        media = event.message.media
         channel_username = getattr(event.chat, 'username', 'unknown')
         channel_link = f"@{channel_username}" if channel_username != 'unknown' else "Unknown Channel"
 

@@ -63,7 +63,7 @@ You can add multiple OpenAI providers by creating sections with names like `[Ope
 
 ### [Channels]
 
-- `channels`: A list of channels to monitor, e.g., `@channel1, @channel2` (at least one required).
+- `channels`: A list of channels to monitor, e.g., `channel1, channel2` (at least one required).
 
 ### [Telegram]
 
@@ -101,7 +101,7 @@ model = llama-3-70b
 proxy = 
 
 [Channels]
-channels = @channel1, @channel2
+channels = channel1, channel2
 
 [Telegram]
 recipient_group_id = *** REDACTED ***

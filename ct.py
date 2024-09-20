@@ -3,16 +3,17 @@ import asyncio
 import configparser
 import hashlib
 import logging
+import os
+import re
 import sys
 from datetime import datetime, timedelta
-import re
+
+import aiohttp
 import openai
-import requests
 from duckduckgo_search import DDGS
 from googletrans import Translator
 from telethon import TelegramClient, events
-from telethon.errors import UsernameInvalidError
-from telethon.errors.rpcerrorlist import PeerIdInvalidError
+from telethon.errors.rpcerrorlist import UsernameInvalidError
 
 # Constants
 LOG_FILE = 'ct.log'
@@ -72,14 +73,14 @@ def get_openai_providers(config, translators_enabled, logger):
     return providers
 
 
-def translate_with_openai(text, openai_providers, system_message, user_message_template, logger):
-    """Translate text using OpenAI providers."""
+async def translate_with_openai(text, openai_providers, system_message, user_message_template, logger):
+    """Translate text using OpenAI providers asynchronously."""
     user_message = user_message_template.format(text=text)
     for provider in openai_providers:
         openai.api_base = provider['api_base']
         openai.api_key = provider['key']
         try:
-            response = openai.ChatCompletion.create(
+            response = await openai.ChatCompletion.acreate(
                 model=provider['model'],
                 messages=[
                     {"role": "system", "content": system_message},
@@ -94,43 +95,64 @@ def translate_with_openai(text, openai_providers, system_message, user_message_t
     return "Translation failed.", None
 
 
-def translate_with_deepl(text, deepl_key, logger):
-    """Translate text using DeepL."""
+async def translate_with_deepl(text, deepl_key, logger):
+    """Translate text using DeepL asynchronously."""
     if not deepl_key:
         logger.error("DeepL API key is not set.")
         return "Translation failed."
     url = "https://api.deepl.com/v2/translate"
-    payload = {
+    params = {
         "auth_key": deepl_key,
         "text": text,
         "target_lang": "EN"
     }
     try:
-        response = requests.post(url, data=payload)
-        response.raise_for_status()
-        return response.json()["translations"][0]["text"]
-    except requests.exceptions.RequestException as e:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=params) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return data["translations"][0]["text"]
+    except Exception as e:
         logger.error(f"DeepL API error: {e}")
         logger.exception(e)
         return "Translation failed."
 
 
-def translate_with_duckduckgo(text, model, proxy_url, system_message, user_message_template, logger):
-    """Translate text using DuckDuckGo."""
-    ddgs = DDGS(proxy=proxy_url) if proxy_url else DDGS()
-    full_message = system_message + " " + user_message_template.format(text=text)
-    try:
-        result = ddgs.chat(keywords=full_message, model=model)
-        return result
-    except Exception as e:
-        logger.error(f"DuckDuckGo translation error: {e}")
-        logger.exception(e)
-        return "Translation failed."
+async def translate_with_duckduckgo(text, model, proxy_url, system_message, user_message_template, logger):
+    """Translate text using DuckDuckGo, offloading to a thread."""
+    def duckduckgo_translate():
+        ddgs = DDGS(proxy=proxy_url) if proxy_url else DDGS()
+        full_message = system_message + " " + user_message_template.format(text=text)
+        try:
+            result = ddgs.chat(keywords=full_message, model=model)
+            return result
+        except Exception as e:
+            logger.error(f"DuckDuckGo translation error: {e}")
+            logger.exception(e)
+            return "Translation failed."
+    translation = await asyncio.to_thread(duckduckgo_translate)
+    return translation
 
 
-def hash_message(message):
-    """Create a hash of the message."""
-    return hashlib.md5(message.encode('utf-8')).hexdigest()
+async def translate_with_google(text, translator, logger):
+    """Translate text using Google Translate asynchronously."""
+    def google_translate():
+        try:
+            result = translator.translate(text, dest='en')
+            return result.text
+        except Exception as e:
+            logger.error(f"Googletrans error: {e}")
+            logger.exception(e)
+            return "Translation failed."
+    translation = await asyncio.to_thread(google_translate)
+    return translation
+
+
+async def hash_message(message):
+    """Create a hash of the message asynchronously."""
+    def compute_hexdigest(msg):
+        return hashlib.md5(msg.encode('utf-8')).hexdigest()
+    return await asyncio.to_thread(compute_hexdigest, message)
 
 
 def cleanup_processed_messages(processed_messages, retention_minutes=PROCESSED_MESSAGE_RETENTION_MINUTES):
@@ -154,11 +176,13 @@ async def resolve_channels(client, channels, logger):
         try:
             entity = await client.get_input_entity(channel)
             resolved_channels.append(entity)
+            logger.info(f"Successfully resolved channel: {channel}")
         except UsernameInvalidError:
             logger.error(f"Invalid username: '{channel}'")
         except Exception as e:
             logger.error(f"Error resolving channel '{channel}': {e}")
     return resolved_channels
+
 
 async def main():
     """Main function to run the Telegram client."""
@@ -191,11 +215,7 @@ async def main():
     duckduckgo_proxy = config.get('DuckDuckGo', 'proxy', fallback=None)
     ddg_model = config.get('DuckDuckGo', 'model', fallback='llama-3-70b')
 
-    # Initialize Telegram client
-    client = TelegramClient('anon', api_id, api_hash)
-    translator = Translator()
-
-    # Load translators enabled settings
+    # Initialize translators_enabled dictionary
     translators_enabled = {
         'DeepL': config.getboolean('Translators', 'DeepL', fallback=True),
         'Google': config.getboolean('Translators', 'Google', fallback=True),
@@ -209,7 +229,7 @@ async def main():
     else:
         openai_providers = []
 
-    # Load and process CHANNELS
+    # Validate and process CHANNELS
     channels_config = config.get('Channels', 'channels', fallback='').strip()
     if not channels_config:
         logger.error("No channels specified in the 'Channels' section of the configuration file.")
@@ -236,7 +256,11 @@ async def main():
     client = TelegramClient('anon', api_id, api_hash)
 
     # Start the client before resolving channels
-    await client.start()
+    try:
+        await client.start()
+    except Exception as e:
+        logger.exception("Failed to start the Telegram client.")
+        sys.exit(1)
 
     # Resolve channels
     channel_entities = await resolve_channels(client, CHANNELS, logger)
@@ -244,17 +268,22 @@ async def main():
         logger.error("No valid channels to listen to after resolving entities.")
         sys.exit(1)
 
-    @client.on(events.NewMessage(chats=channel_entities))
+    # Initialize the translator
+    translator = Translator()
 
+    @client.on(events.NewMessage(chats=channel_entities))
     async def new_message_handler(event):
+        start_time = datetime.now()
         original_text = event.message.text or ''
         if not original_text.strip():
             logger.info("Received a message with no text. Skipping.")
             return
 
+        # Asynchronously clean up processed messages
         cleanup_processed_messages(processed_messages)
 
-        message_hash = hash_message(original_text)
+        # Asynchronously hash the message
+        message_hash = await hash_message(original_text)
         if message_hash in processed_messages:
             logger.info("Duplicate message detected. Ignoring.")
             return
@@ -269,26 +298,29 @@ async def main():
 
         translations = {"Original": filtered_text if filtered_text else "Media Post"}
 
-        # Attempt translations
+        # Attempt translations asynchronously
         for provider_name, enabled in translators_enabled.items():
             if enabled and filtered_text:
                 logger.info(f"Attempting translation with {provider_name}")
                 try:
                     if provider_name.startswith('OpenAI'):
-                        translation, model = translate_with_openai(
+                        translation, model = await translate_with_openai(
                             filtered_text, openai_providers, system_message, user_message_template, logger
                         )
                         if translation != "Translation failed.":
                             translations[model] = translation
                             break  # Exit after first successful translation
                     elif provider_name == 'Google':
-                        translations["Google"] = translator.translate(filtered_text, dest='en').text
+                        translation = await translate_with_google(filtered_text, translator, logger)
+                        translations["Google"] = translation
                     elif provider_name == 'DeepL':
-                        translations["DeepL"] = translate_with_deepl(filtered_text, deepl_key, logger)
+                        translation = await translate_with_deepl(filtered_text, deepl_key, logger)
+                        translations["DeepL"] = translation
                     elif provider_name == 'DuckDuckGo':
-                        translations["DuckDuckGo"] = translate_with_duckduckgo(
+                        translation = await translate_with_duckduckgo(
                             filtered_text, ddg_model, duckduckgo_proxy, system_message, user_message_template, logger
                         )
+                        translations["DuckDuckGo"] = translation
                 except Exception as e:
                     logger.error(f"{provider_name} translation error: {e}")
                     logger.exception(e)
@@ -310,9 +342,12 @@ async def main():
             logger.error(f"Failed to send message to the target group: {e}")
             logger.exception(e)
 
-    # Start the client
+        end_time = datetime.now()
+        processing_time = (end_time - start_time).total_seconds()
+        logger.info(f"Message processed in {processing_time:.2f} seconds")
+
+    # Run the client
     try:
-        await client.start()
         await client.run_until_disconnected()
     except KeyboardInterrupt:
         logger.info("Script terminated by user.")
